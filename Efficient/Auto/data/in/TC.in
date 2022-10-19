@@ -1,0 +1,194 @@
+variable k 	 	 index 1 2
+
+units metal 		
+dimension 3
+#neighbor 2 bin 
+neigh_modify delay 0 every 1 check yes page 1000000 one 10000
+boundary p p p
+
+atom_style full
+bond_style     class2
+angle_style    class2
+dihedral_style class2
+improper_style class2
+special_bonds  lj 0.0 0.0 0.5 coul 0.0 0.0 0.5
+
+pair_style lj/class2/coul/long 10.0 10.0
+kspace_style pppm 1e-6
+read_data 0001001111001110.data
+
+# *******************  Define a few parameters  **********************
+
+variable              T        equal  300                        # average temperature   300K
+variable              DT       equal  0.0005                    	 # timestep    0.5fs
+variable              T_low    equal  270                        # Heat sink             270K
+variable              T_hight  equal  330                        # Heat source           330K
+
+# *********************  Mass setting  *****************
+mass                       1     12.010700    #  c2
+mass                       2     1.007970     #  hc
+mass                       2     12.010700    #  c3
+mass                       3     12.010700    #  c1
+
+# *********************  Potential  function setting  *****************
+pair_coeff	1 		1		0.002341678	4.01	10				#c3
+pair_coeff	2 		2		0.000867288	2.995	10				#hc
+pair_coeff	3 		3		0.002341678	4.01	10				#c2
+pair_coeff	4 		4		0.002341678	4.01	10				#c1
+
+
+pair_coeff	1 		2		0.0014251	3.5025	10
+pair_coeff	1 		3		0.002341678		4.01	10
+pair_coeff	1 		4		0.002341678		4.01	10
+
+
+pair_coeff	2 		3		0.0014251	3.5025	10
+pair_coeff	2 		4		0.0014251	3.5025	10
+
+pair_coeff	3 		4		0.002341678		4.01	10
+
+# *********************  thermo output  ************************
+
+thermo                1000
+thermo_style      custom  step  temp  lx  ly  lz  press  vol  pxx  pyy  pzz  pe  ke  etotal  #energy output
+
+## *********************** Initialization ##relaxation< ***********************
+## ***********************   Optimize at  0 K  ***********************
+## ***********************  Static equilibrium  **************************
+
+dump               1  all  custom  1000  dump.minimization  id  type  x  y  z  # Output the minimum structure, see whether the structure is reasonable
+dump_modify        1  sort  id
+
+#neighbor          0.3    bin
+#neigh_modify      once   yes          ### Generally no Settings are required
+
+fix         NPT1  all box/relax aniso 0.0
+min_style   cg
+minimize    1.0e-8	1.0e-8	1000 100000
+unfix       NPT1
+
+fix                1  all  nve
+min_style          cg
+minimize           1.0e-5 1.0e-8 1000000 1000000
+undump             1
+unfix              1
+write_data      PPE_NPT.data
+
+#  *************************  Set velocity at 300K  **********************
+
+reset_timestep                   0                                                        # Time reset
+velocity             all  create  ${T}  $k19206  mom  yes  rot  yes  dist  gaussian        # Setting Random  seed
+
+#  *************************  The following to  divide  block ***********************
+#  *************************  For X direction  **************************************
+
+region          lfixed      block       INF            10.2       	INF   INF       INF   INF    units box
+region          rfixed      block       61.0           INF       	INF   INF       INF   INF    units box
+
+region          hot         block       10.2           15.0        INF   INF       INF   INF    units box
+region          cold        block       56.0           61.0        INF   INF       INF   INF    units box
+
+region			main		block       10.2           61.0        INF   INF       INF   INF    units box
+region			mid			block		15.0           56.0        INF   INF       INF   INF    units box
+
+group           lfixed	region lfixed
+group           rfixed	region rfixed
+group           hot   	region hot
+group           cold  	region cold
+
+
+group			main		region	main
+group			mid			region	mid
+## *****************  Frozen atomic group  **************         
+region          fixed      union     2     lfixed    rfixed
+ 
+group           freeze      region       fixed
+
+##  **************  Freeze (Freeze some of the atoms of the model)  **************
+
+velocity         freeze    set       0.0   0.0   0.0    units box
+fix              3        freeze     nve/noforce        
+
+## ***************  Calculate some thermodymanic quantities  *******************
+
+compute          Thot     hot        temp/region        hot
+compute          Tcold    cold       temp/region        cold
+compute          Ftemp    freeze     temp/region        fixed
+
+# ****************  Compute temperature  *****************
+
+compute	          ALLKe      all     ke/atom                    
+variable          KB         equal   8.625e-5                    
+variable          TEMP       atom    c_ALLKe/1.5/${KB} 
+fix               Totaltemperatom    all     ave/atom      10   5000   50000   v_TEMP
+compute BLOCKS all chunk/atom bin/1d x lower 0.01 units reduced
+fix     T_PROFILE all ave/chunk 1000 10000 10000000 BLOCKS v_TEMP file temp.txt
+
+# ****************  Now optimize at 300K  ********************
+# ****************  The 1nd equilibration run  ********************
+
+fix                1      main      nvt     temp     ${T}    ${T}    0.05
+dump               1      all      custom   50000   dump.optimize   id   type   x   y   z   f_Totaltemperatom 
+dump_modify        1      sort id                                                                                 ## Sort each atom 
+dump picture  all custom 200000 dump_picture.run* id mol type x y z#v_temp
+thermo_style       custom   step    temp   lx   ly   lz   c_Thot   c_Tcold   c_Ftemp  press  pe  ke  etotal 
+thermo	           1000
+
+## Set the time_step
+
+timestep                    ${DT}
+
+#restart
+#restart           500000    optimize.*.restart
+
+run		           200000
+
+undump              1
+unfix               1
+
+#  ************************ The second stage  **********************
+#  ************************ The 2nd equilibration run  **********************
+#  ************************ Write  a  shell  script  to  generate velocity random number  *******************
+
+#change_box all boundary  f p p 
+
+variable           hot_velocity       equal        $k11535
+variable           cold_velocity      equal        $k27117
+variable           random_seed        equal        0.1                ## To get excellent kinetic properties, this is a good choice
+
+fix                1       main          nve
+fix                Hot     hot       langevin    ${T_hight}  ${T_hight}     0.05     ${hot_velocity}     tally   yes
+fix                Cold    cold      langevin    ${T_low}    ${T_low}       0.05     ${cold_velocity}    tally   yes    #langevin
+
+
+## Write interfacial structure to file for Ovito visualization
+
+dump               1      all   custom   50000   dump.heatflux    id   type   x   y   z   f_Totaltemperatom
+dump_modify        1      sort  id
+
+variable           tdiff    equal   c_Thot-c_Tcold
+
+variable Time 	 equal step
+variable EL 	 equal f_Hot
+variable ER 	 equal f_Cold
+variable Ltd 	 equal 100000  # Periodic saving steps equil
+variable T0 	 equal 300
+
+thermo_style       custom   step    temp   lx   ly   lz   c_Thot   c_Tcold   c_Ftemp   f_Hot   f_Cold  v_tdiff press  pe  ke  etotal
+thermo	           1000
+
+compute slabs all chunk/atom bin/1d x lower 0.0125 units reduced  # 热流方向
+
+
+fix Tem_jump all ave/chunk 1000 3000 4000000 slabs v_TEMP file $k_temp_equ_${T0}K.dat #温度梯度
+fix	E_out	all print ${Ltd} "${Time}  ${EL}  ${ER}" file $k_Energy_equ_${T0}K.dat title "Time  E1  E2" screen no #热流
+
+run                4000000
+
+unfix              Totaltemperatom
+undump             1
+
+clear
+
+next k
+jump TC.in

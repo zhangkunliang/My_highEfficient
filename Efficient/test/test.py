@@ -122,7 +122,7 @@ def write_headFile():
                                     temp[8] + '\n'
                                 )
                             i = i + 9  # 步长为9
-                        elif to_list[j] == '1':
+                        elif to_list[j] == '1.txt':
                             # 读取9行数据
                             for k in range(i, i + 9):
                                 copyfile.write(head_f[k])
